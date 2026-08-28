@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+dist/
+build/
+output/
+*.png
+*.jpg
+*.jpeg
+*.webp
+!test_data/*
