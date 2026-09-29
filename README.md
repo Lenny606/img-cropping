@@ -151,3 +151,7 @@ Průchodnost:             0.04 obr/s (cca 2.4 obr/min)
 ```bash
 .venv/bin/python3 -m unittest discover tests
 ```
+
+## Experiment: ACI watermark inpainting
+
+[`scripts/try_aci_lama.py`](scripts/try_aci_lama.py) runs a pinned LaMa ONNX model on ACI photos with a fixed watermark mask. Setup, example command and findings from 20 sample photos are in [`experiments/README.md`](experiments/README.md).
