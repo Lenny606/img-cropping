@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from PIL import Image
+from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_URL = "https://huggingface.co/sapienkit/LaMa-ONNX/resolve/main/lama_fp32.onnx"
@@ -51,7 +51,9 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def make_mask(template: Image.Image, size: tuple[int, int]) -> Image.Image:
+def make_mask(template: Image.Image, size: tuple[int, int], grow: int = 0) -> Image.Image:
+    if grow:
+        template = template.filter(ImageFilter.MaxFilter(2 * grow + 1))
     mask = template.resize(size, Image.Resampling.BILINEAR)
     return mask.point(lambda value: 255 if value >= 128 else 0, mode="L")
 
@@ -75,7 +77,11 @@ def main() -> None:
     parser.add_argument("--mask-template", type=Path, default=ROOT / "experiments/aci-watermark-mask.png")
     parser.add_argument("--model", type=Path, default=Path.home() / ".cache/img-cropping/lama_fp32.onnx")
     parser.add_argument("--limit", type=int, default=0, help="Process only the first N images")
+    parser.add_argument("--mask-grow", type=int, default=0,
+                        help="Expand the template by this many pixels before resizing (default: 0)")
     args = parser.parse_args()
+    if args.mask_grow < 0:
+        parser.error("--mask-grow must be nonnegative")
 
     images = ([args.input] if args.input.is_file() else
               sorted(path for path in args.input.iterdir() if path.suffix.lower() in EXTENSIONS))
@@ -97,22 +103,26 @@ def main() -> None:
         try:
             with Image.open(path) as source:
                 image = source.convert("RGB")
-            mask = make_mask(template, image.size)
+            mask = make_mask(template, image.size, args.mask_grow)
             result = inpaint(session, image, mask)
             output = args.output_dir / f"{path.stem}_lama.png"
             result.save(output)
             mask.save(args.output_dir / "masks" / f"{path.stem}_mask.png")
+            aspect_difference = abs((image.width / image.height) / (template.width / template.height) - 1)
             item = {"input": str(path), "output": str(output), "success": True,
-                    "seconds": round(time.perf_counter() - started, 3)}
+                    "seconds": round(time.perf_counter() - started, 3),
+                    "layout_warning": aspect_difference > 0.05}
         except Exception as exc:
             item = {"input": str(path), "success": False, "error": str(exc)}
         results.append(item)
         print(f"[{index}/{len(images)}] {path.name}: " +
-              (f"{item['seconds']} s" if item["success"] else f"ERROR {item['error']}"), flush=True)
+              ((f"{item['seconds']} s" + (" (different aspect ratio; inspect mask)" if item["layout_warning"] else ""))
+               if item["success"] else f"ERROR {item['error']}"), flush=True)
 
     (args.output_dir / "metrics.json").write_text(
         json.dumps({"model_url": MODEL_URL, "model_sha256": MODEL_SHA256,
-                    "mask_template": str(args.mask_template), "items": results}, indent=2),
+                    "mask_template": str(args.mask_template), "mask_grow": args.mask_grow,
+                    "items": results}, indent=2),
         encoding="utf-8")
     if any(not item["success"] for item in results):
         raise SystemExit(1)
